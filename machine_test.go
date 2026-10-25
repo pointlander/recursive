@@ -147,8 +147,8 @@ func TestInit(t *testing.T) {
 	if st.Ptr != 0 || st.At(0) != 0 || st.At(1) != 0 || st.At(2) != 96 || st.At(3) != 112 || st.At(4) != 112 || st.At(5) != 32 {
 		t.Fatalf("nest ptr %d tape %d %d %d %d %d %d code %s", st.Ptr, st.At(0), st.At(1), st.At(2), st.At(3), st.At(4), st.At(5), nest)
 	}
-	if squeeze("><+-><") != "" || squeeze("++><--") != "" || squeeze("+>-<") != "+>-<" || squeeze("[->+<]") != "[->+<]" {
-		t.Fatalf("squeeze %q %q %q", squeeze("++><--"), squeeze("+>-<"), squeeze("[->+<]"))
+	if squeeze("><+-><") != "" || squeeze("++><--") != "" || squeeze("+>-<") != "+>-<" || squeeze("[->+<]") != "[->+<]" || squeeze("^v") != "" || squeeze("v^") != "" {
+		t.Fatalf("squeeze %q %q %q %q", squeeze("++><--"), squeeze("+>-<"), squeeze("[->+<]"), squeeze("v^"))
 	}
 }
 

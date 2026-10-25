@@ -6,11 +6,13 @@ package main
 
 import "fmt"
 
-// The pack machine is brainfuck with a compression command.
+// The pack machine is a two-dimensional brainfuck machine with a
+// compression command.
 //
-// ><+-.,[] move, add, read, write, and loop on an 8-bit wrapping tape
-// that grows in both directions. ',' reads the next input byte and stores
-// 0 at the end of input. '[' and ']' jump the way they do in Execute.
+// >< move horizontally and ^v move vertically on an 8-bit wrapping tape
+// that grows in every direction. +-.,[] add, read, write, and loop.
+// ',' reads the next input byte and stores 0 at the end of input.
+// '[' and ']' jump the way they do in Execute.
 // A byte that is not a command is written straight to the output, so a
 // string that contains no command bytes is a program that prints itself.
 //
@@ -128,7 +130,7 @@ func encode(text string, special func(byte) bool) string {
 
 func isSpecial(b byte) bool {
 	switch b {
-	case '~', '`', '|', '>', '<', '+', '-', '.', ',', '[', ']':
+	case '~', '`', '|', '>', '<', '^', 'v', '+', '-', '.', ',', '[', ']':
 		return true
 	default:
 		return false
@@ -276,7 +278,7 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 		return Stop{}, err
 	}
 
-	t := tape{cells: []byte{0}}
+	sh := sheet{row0: tape{cells: []byte{0}}}
 	ptr := 0
 	in := 0
 	var out []byte
@@ -291,25 +293,29 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 			ptr++
 		case '<':
 			ptr--
+		case '^':
+			sh.y--
+		case 'v':
+			sh.y++
 		case '+':
-			*t.at(ptr)++
+			*sh.at(ptr)++
 		case '-':
-			*t.at(ptr)--
+			*sh.at(ptr)--
 		case '.':
-			out = append(out, *t.at(ptr))
+			out = append(out, *sh.at(ptr))
 		case ',':
 			if in < len(input) {
-				*t.at(ptr) = input[in]
+				*sh.at(ptr) = input[in]
 				in++
 			} else {
-				*t.at(ptr) = 0
+				*sh.at(ptr) = 0
 			}
 		case '[':
-			if *t.at(ptr) == 0 {
+			if *sh.at(ptr) == 0 {
 				ip = jump[ip]
 			}
 		case ']':
-			if *t.at(ptr) != 0 {
+			if *sh.at(ptr) != 0 {
 				ip = jump[ip]
 			}
 		case '~':
@@ -339,11 +345,35 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 	}
 	return Stop{
 		Out:   string(out),
-		Cells: t.cells,
-		Base:  t.base,
+		Cells: sh.row0.cells,
+		Base:  sh.row0.base,
 		Ptr:   ptr,
+		Y:     sh.y,
 		Steps: steps,
 	}, nil
+}
+
+// sheet is the pack machine's plane. Row 0 is stored on its own so Stop
+// can report that row the way the one-dimensional machine did.
+type sheet struct {
+	y    int
+	row0 tape
+	rows map[int]*tape
+}
+
+func (s *sheet) at(x int) *byte {
+	if s.y == 0 {
+		return s.row0.at(x)
+	}
+	if s.rows == nil {
+		s.rows = make(map[int]*tape)
+	}
+	t := s.rows[s.y]
+	if t == nil {
+		t = &tape{cells: []byte{0}}
+		s.rows[s.y] = t
+	}
+	return t.at(x)
 }
 
 // applyTilde runs the '~' command at i and returns the index of its last byte.

@@ -896,5 +896,7 @@ func squeeze(code string) string {
 }
 
 func cancels(a, b byte) bool {
-	return (a == '>' && b == '<') || (a == '<' && b == '>') || (a == '+' && b == '-') || (a == '-' && b == '+')
+	return (a == '>' && b == '<') || (a == '<' && b == '>') ||
+		(a == '^' && b == 'v') || (a == 'v' && b == '^') ||
+		(a == '+' && b == '-') || (a == '-' && b == '+')
 }

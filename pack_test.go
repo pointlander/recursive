@@ -74,6 +74,31 @@ func TestExecutePack(t *testing.T) {
 	}
 }
 
+func TestPlane(t *testing.T) {
+	st, err := ExecutePack("v+.", "", 20)
+	if err != nil || st.Out != "\x01" || st.Ptr != 0 || st.Y != 1 {
+		t.Fatalf("down %q x %d y %d %v", st.Out, st.Ptr, st.Y, err)
+	}
+	st, err = ExecutePack("+v++.^-.", "", 30)
+	if err != nil || st.Out != "\x02\x00" || st.Y != 0 || st.Ptr != 0 || st.At(0) != 0 {
+		t.Fatalf("two rows %q cell %d y %d %v", st.Out, st.At(0), st.Y, err)
+	}
+	st, err = ExecutePack(">v<.", "", 20)
+	if err != nil || st.Ptr != 0 || st.Y != 1 || st.Out != "\x00" {
+		t.Fatalf("corner %q x %d y %d %v", st.Out, st.Ptr, st.Y, err)
+	}
+
+	const name = "andrew jordan snodgrass"
+	prog := Pack(name)
+	if prog != name {
+		t.Fatalf("Pack(%q) = %q", name, prog)
+	}
+	st, err = ExecutePack(prog, "", len(prog)+10)
+	if err != nil || st.Out != name || st.Y != 0 {
+		t.Fatalf("name %q y %d %v", st.Out, st.Y, err)
+	}
+}
+
 func TestPackRoundTrip(t *testing.T) {
 	cases := []string{
 		"",
@@ -96,7 +121,7 @@ func TestPackRoundTrip(t *testing.T) {
 	}
 	for _, text := range cases {
 		prog := Pack(text)
-		if text != "" && !isSpecial(text[0]) && !strings.ContainsAny(text, "~><+-.,[]") && len(prog) > len(text) {
+		if text != "" && !isSpecial(text[0]) && !strings.ContainsAny(text, "~><^v+-.,[]") && len(prog) > len(text) {
 			t.Fatalf("%q grew %d -> %d", text, len(text), len(prog))
 		}
 		st, err := ExecutePack(prog, "", len(prog)+10)

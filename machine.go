@@ -12,6 +12,7 @@ type Stop struct {
 	Cells []byte // Cells[i] is absolute tape cell Base+i
 	Base  int
 	Ptr   int // absolute tape index
+	Y     int // vertical position on the pack machine; Execute leaves this 0
 	Steps int
 }
 

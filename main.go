@@ -79,6 +79,25 @@ func main() {
 	}
 	fmt.Printf("name bbc mtf pack %d bytes\n", len(namePack))
 	fmt.Printf("program pack %d bytes\n", len(progPack))
+
+	namePlane, err := Plane(text)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if len(code) < len(namePlane) && commandOnly(code) {
+		namePlane = code
+	}
+	st, err = ExecutePack(namePlane, "", 2_000_000)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if st.Out != text || !commandOnly(namePlane) {
+		fmt.Fprintf(os.Stderr, "plane printed %q\n", st.Out)
+		os.Exit(1)
+	}
+	fmt.Printf("name plane %d bytes\n%s\n", len(namePlane), namePlane)
 }
 
 // flateCompress returns data compressed with compress/flate at the best level.
