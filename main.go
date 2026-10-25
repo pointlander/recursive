@@ -5,7 +5,10 @@
 package main
 
 import (
+	"bytes"
+	"compress/flate"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -25,9 +28,54 @@ func main() {
 		fmt.Fprintf(os.Stderr, "machine printed %q\n", st.Out)
 		os.Exit(1)
 	}
-	if err := os.WriteFile("snodgrass.bf", []byte(code), 0o644); err != nil {
+	prog := []byte(code)
+	if err := os.WriteFile("snodgrass.bf", prog, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Printf("%d bytes\n%s\n", len(code), code)
+	fmt.Printf("%d bytes\n%s\n", len(prog), code)
+
+	namePacked, err := flateCompress([]byte(text))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	progPacked, err := flateCompress(prog)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Printf("name %d bytes, flate %d bytes\n", len(text), len(namePacked))
+	fmt.Printf("program %d bytes, flate %d bytes\n", len(prog), len(progPacked))
+}
+
+// flateCompress returns data compressed with compress/flate at the best level.
+// The result is raw DEFLATE, and inflating it yields data again.
+func flateCompress(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := flate.NewWriter(&buf, flate.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	out := buf.Bytes()
+	got, err := flateDecompress(out)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(got, data) {
+		return nil, fmt.Errorf("flate round trip mismatch: got %d bytes, want %d", len(got), len(data))
+	}
+	return out, nil
+}
+
+func flateDecompress(data []byte) ([]byte, error) {
+	r := flate.NewReader(bytes.NewReader(data))
+	defer r.Close()
+	return io.ReadAll(r)
 }
