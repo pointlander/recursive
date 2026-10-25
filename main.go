@@ -35,7 +35,16 @@ func main() {
 	}
 	fmt.Printf("%d bytes\n%s\n", len(prog), code)
 
-	namePacked, err := flateCompress([]byte(text))
+	bbc := BBC(text)
+	mtf := MTF(bbc)
+	if InverseBBC(InverseMTF(mtf)) != text {
+		fmt.Fprintf(os.Stderr, "bbc mtf inverse %q\n", InverseBBC(InverseMTF(mtf)))
+		os.Exit(1)
+	}
+	fmt.Printf("bbc %q\n", bbc)
+	fmt.Printf("mtf %q\n", mtf)
+
+	namePacked, err := flateCompress([]byte(mtf))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -45,16 +54,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Printf("name %d bytes, flate %d bytes\n", len(text), len(namePacked))
+	fmt.Printf("name bbc mtf %d bytes, flate %d bytes\n", len(mtf), len(namePacked))
 	fmt.Printf("program %d bytes, flate %d bytes\n", len(prog), len(progPacked))
 
-	namePack := Pack(text)
+	namePack := Pack(mtf)
 	st, err = ExecutePack(namePack, "", 2_000_000)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if st.Out != text {
+	if st.Out != mtf || InverseBBC(InverseMTF(st.Out)) != text {
 		fmt.Fprintf(os.Stderr, "pack printed %q\n", st.Out)
 		os.Exit(1)
 	}
@@ -68,7 +77,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "pack printed %q\n", st.Out)
 		os.Exit(1)
 	}
-	fmt.Printf("name pack %d bytes\n", len(namePack))
+	fmt.Printf("name bbc mtf pack %d bytes\n", len(namePack))
 	fmt.Printf("program pack %d bytes\n", len(progPack))
 }
 
