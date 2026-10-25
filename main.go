@@ -47,6 +47,29 @@ func main() {
 	}
 	fmt.Printf("name %d bytes, flate %d bytes\n", len(text), len(namePacked))
 	fmt.Printf("program %d bytes, flate %d bytes\n", len(prog), len(progPacked))
+
+	namePack := Pack(text)
+	st, err = ExecutePack(namePack, "", 2_000_000)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if st.Out != text {
+		fmt.Fprintf(os.Stderr, "pack printed %q\n", st.Out)
+		os.Exit(1)
+	}
+	progPack := Pack(code)
+	st, err = ExecutePack(progPack, "", 2_000_000)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if st.Out != code {
+		fmt.Fprintf(os.Stderr, "pack printed %q\n", st.Out)
+		os.Exit(1)
+	}
+	fmt.Printf("name pack %d bytes\n", len(namePack))
+	fmt.Printf("program pack %d bytes\n", len(progPack))
 }
 
 // flateCompress returns data compressed with compress/flate at the best level.
