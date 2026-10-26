@@ -11,8 +11,9 @@ type Stop struct {
 	Out   string
 	Cells []byte // Cells[i] is absolute tape cell Base+i
 	Base  int
-	Ptr   int // absolute tape index
-	Y     int // vertical position on the pack machine; Execute leaves this 0
+	Ptr   int   // absolute tape index; axis 0 on the pack machine
+	Y     int   // axis 1 on the pack machine; Execute leaves this 0
+	Pos   []int // pack-machine coordinate; nil after Execute
 	Steps int
 }
 

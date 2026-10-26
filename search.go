@@ -896,7 +896,13 @@ func squeeze(code string) string {
 }
 
 func cancels(a, b byte) bool {
-	return (a == '>' && b == '<') || (a == '<' && b == '>') ||
-		(a == '^' && b == 'v') || (a == 'v' && b == '^') ||
-		(a == '+' && b == '-') || (a == '-' && b == '+')
+	if (a == '+' && b == '-') || (a == '-' && b == '+') {
+		return true
+	}
+	for _, p := range axisPair {
+		if (a == p[0] && b == p[1]) || (a == p[1] && b == p[0]) {
+			return true
+		}
+	}
+	return false
 }

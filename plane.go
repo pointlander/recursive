@@ -15,12 +15,13 @@ import (
 
 // Plane searches for a short program that prints text on the pack machine.
 //
-// Every byte of the program is one of ><^v+-.[]. The search does not emit
-// literal bytes, '~' escapes, raw blocks, or a bit-packed payload. It plants
-// a few anchor cells with a flat or nested multiply loop, lays those cells
-// out on the plane, and walks a print path of moves, adds, and dots. The
-// result is the shortest program found in this family, not a proof of the
-// shortest program the machine can run.
+// Every byte of the program is a one-byte axis step or one of +-.[].
+// The search does not emit literal bytes, '~' escapes, raw blocks, a
+// bit-packed payload, or an '@' operand. It plants a few anchor cells
+// with a flat or nested multiply loop, lays those cells out across the
+// axes the machine can step in one byte, and walks a print path of moves,
+// adds, and dots. The result is the shortest program found in this family,
+// not a proof of the shortest program the machine can run.
 
 const (
 	planeNest = iota
@@ -34,15 +35,17 @@ const (
 	planePool     = 24
 	planePowCap   = 80000
 	planeSlack    = 12
+	planeMaxD     = axisCount
 )
 
 // planeInner is the counter for a nested multiply loop. The outer counter
 // stays at the origin. Data cells are placed on neither.
 var planeInner = pt{1, 0}
 
-type pt struct {
-	x, y int
-}
+// pt is a coordinate on the one-byte axes. Axis 0 is >< and axis 1 is v^.
+// A zero axis is unused. The pack machine can address further axes with
+// '@'; this search stays on the one-byte axes, where a step costs one byte.
+type pt [planeMaxD]int
 
 type loopPlan struct {
 	cost uint8
@@ -73,6 +76,12 @@ type scaleBuild struct {
 	at   pt
 }
 
+type layoutKey struct {
+	kind int
+	k    int
+	at   pt
+}
+
 type planeSearch struct {
 	text     string
 	alpha    []byte
@@ -80,6 +89,7 @@ type planeSearch struct {
 	bestCode string
 	bestSeen int
 	pool     []planeCand
+	layouts  map[layoutKey][][]pt
 }
 
 // Plane returns a command-only pack-machine program that prints text.
@@ -88,7 +98,7 @@ func Plane(text string) (string, error) {
 		return "", nil
 	}
 	if len(text) > 80 {
-		return "", fmt.Errorf("plane: text longer than 80 bytes")
+		return "", fmt.Errorf("space: text longer than 80 bytes")
 	}
 	preparePlans()
 	s := &planeSearch{text: text, alpha: alphabet(text)}
@@ -131,7 +141,7 @@ func (s *planeSearch) searchNest() {
 			})
 		}
 	}
-	fmt.Fprintf(os.Stderr, "plane nest best=%d pool=%d\n", s.bestSeen, len(s.pool))
+	fmt.Fprintf(os.Stderr, "space nest best=%d pool=%d\n", s.bestSeen, len(s.pool))
 }
 
 func (s *planeSearch) searchFlat() {
@@ -148,7 +158,7 @@ func (s *planeSearch) searchFlat() {
 			})
 		}
 	}
-	fmt.Fprintf(os.Stderr, "plane flat best=%d pool=%d\n", s.bestSeen, len(s.pool))
+	fmt.Fprintf(os.Stderr, "space flat best=%d pool=%d\n", s.bestSeen, len(s.pool))
 }
 
 func (s *planeSearch) eval(kind, a, b int, mults []byte) {
@@ -162,10 +172,23 @@ func (s *planeSearch) eval(kind, a, b int, mults []byte) {
 		builds = scaleVariants(a)
 	}
 	for _, built := range builds {
-		for _, pts := range layouts(kind, k, built.at) {
+		for _, pts := range s.layoutSet(kind, k, built.at) {
 			s.consider(kind, a, b, copied, pts, built.at)
 		}
 	}
+}
+
+func (s *planeSearch) layoutSet(kind, k int, counter pt) [][]pt {
+	if s.layouts == nil {
+		s.layouts = make(map[layoutKey][][]pt)
+	}
+	key := layoutKey{kind: kind, k: k, at: counter}
+	if pts, ok := s.layouts[key]; ok {
+		return pts
+	}
+	pts := layouts(kind, k, counter)
+	s.layouts[key] = pts
+	return pts
 }
 
 func (s *planeSearch) consider(kind, a, b int, mults []byte, pts []pt, at pt) {
@@ -206,7 +229,7 @@ func (s *planeSearch) consider(kind, a, b int, mults []byte, pts []pt, at pt) {
 func (s *planeSearch) add(c planeCand) {
 	if c.est < s.bestSeen {
 		s.bestSeen = c.est
-		fmt.Fprintf(os.Stderr, "plane est %d kind=%d K=%d a=%d b=%d\n", c.est, c.kind, c.k, c.a, c.b)
+		fmt.Fprintf(os.Stderr, "space est %d kind=%d K=%d a=%d b=%d\n", c.est, c.kind, c.k, c.a, c.b)
 	}
 	s.pool = append(s.pool, c)
 	sort.SliceStable(s.pool, func(i, j int) bool { return s.pool[i].est < s.pool[j].est })
@@ -230,10 +253,10 @@ func (s *planeSearch) finish() {
 		if code == "" {
 			continue
 		}
-		if len(code) < s.bestLen || (len(code) == s.bestLen && usesPlane(code) && !usesPlane(s.bestCode)) {
+		if len(code) < s.bestLen || (len(code) == s.bestLen && spaceRank(code) > spaceRank(s.bestCode)) {
 			s.bestLen = len(code)
 			s.bestCode = code
-			fmt.Fprintf(os.Stderr, "plane %d bytes\n", len(code))
+			fmt.Fprintf(os.Stderr, "space %d bytes\n", len(code))
 		}
 	}
 }
@@ -250,7 +273,7 @@ func (s *planeSearch) program(c planeCand, pts []pt, useDP bool) string {
 	}
 	code := squeeze(init + body)
 	if err := verifyPlane(s.text, code); err != nil {
-		fmt.Fprintf(os.Stderr, "plane reject %v\n", err)
+		fmt.Fprintf(os.Stderr, "space reject %v\n", err)
 		return ""
 	}
 	return code
@@ -272,8 +295,11 @@ func verifyPlane(text, code string) error {
 
 func commandOnly(code string) bool {
 	for i := 0; i < len(code); i++ {
+		if _, _, ok := axisStep(code[i]); ok {
+			continue
+		}
 		switch code[i] {
-		case '>', '<', '^', 'v', '+', '-', '.', ',', '[', ']':
+		case '+', '-', '.', ',', '[', ']':
 		default:
 			return false
 		}
@@ -281,8 +307,18 @@ func commandOnly(code string) bool {
 	return true
 }
 
-func usesPlane(code string) bool {
-	return strings.ContainsAny(code, "^v")
+// spaceRank is one more than the highest axis the program steps on.
+// A program that never moves has rank 0. Equal-length programs prefer
+// a higher rank so an n-dimensional layout wins a tie with a flat one.
+func spaceRank(code string) int {
+	rank := 0
+	for i := 0; i < len(code); i++ {
+		dim, _, ok := axisStep(code[i])
+		if ok && dim+1 > rank {
+			rank = dim + 1
+		}
+	}
+	return rank
 }
 
 func layouts(kind, k int, counter pt) [][]pt {
@@ -290,10 +326,29 @@ func layouts(kind, k int, counter pt) [][]pt {
 	if kind == planeNest {
 		avoid = append(avoid, planeInner)
 	}
-	return [][]pt{
+	raw := [][]pt{
 		lineAvoid(k, avoid),
 		snakeAvoid(k, avoid),
 	}
+	// The line and the snake cover the first two axes. Each higher
+	// dimensionality adds a compact grid and a star.
+	for d := 3; d <= planeMaxD; d++ {
+		raw = append(raw, gridFill(k, d, avoid), starFill(k, d, avoid))
+	}
+	out := make([][]pt, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, pts := range raw {
+		if len(pts) != k {
+			continue
+		}
+		key := fmt.Sprint(pts)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, pts)
+	}
+	return out
 }
 
 func lineAvoid(k int, avoid []pt) []pt {
@@ -342,6 +397,83 @@ func snakePts(k int, blockInner bool) []pt {
 		avoid = []pt{planeInner}
 	}
 	return snakeAvoid(k, avoid)
+}
+
+// gridFill takes the k free cells closest to the origin inside the first
+// dims axes. Coordinates run from -1 to 2.
+func gridFill(k, dims int, avoid []pt) []pt {
+	if dims > planeMaxD {
+		dims = planeMaxD
+	}
+	type cand struct {
+		p pt
+		m int
+	}
+	var cs []cand
+	var rec func(d int, cur pt, man int)
+	rec = func(d int, cur pt, man int) {
+		if d == dims {
+			cs = append(cs, cand{cur, man})
+			return
+		}
+		for v := -1; v <= 2; v++ {
+			cur[d] = v
+			rec(d+1, cur, man+abs(v))
+		}
+	}
+	rec(0, pt{}, 0)
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].m != cs[j].m {
+			return cs[i].m < cs[j].m
+		}
+		for t := 0; t < planeMaxD; t++ {
+			if cs[i].p[t] != cs[j].p[t] {
+				return cs[i].p[t] < cs[j].p[t]
+			}
+		}
+		return false
+	})
+	pts := make([]pt, 0, k)
+	for _, c := range cs {
+		if occupied(avoid, c.p) || occupied(pts, c.p) {
+			continue
+		}
+		pts = append(pts, c.p)
+		if len(pts) == k {
+			break
+		}
+	}
+	return pts
+}
+
+// starFill puts anchors on distinct axes, one step out, then further
+// steps, then fills the rest from the grid.
+func starFill(k, dims int, avoid []pt) []pt {
+	if dims > planeMaxD {
+		dims = planeMaxD
+	}
+	pts := make([]pt, 0, k)
+	for step := 1; step <= 3 && len(pts) < k; step++ {
+		for axis := 0; axis < dims && len(pts) < k; axis++ {
+			for _, sign := range []int{1, -1} {
+				var p pt
+				p[axis] = sign * step
+				if occupied(avoid, p) || occupied(pts, p) {
+					continue
+				}
+				pts = append(pts, p)
+				break
+			}
+		}
+	}
+	if len(pts) < k {
+		more := gridFill(k-len(pts), dims, append(append([]pt{}, avoid...), pts...))
+		pts = append(pts, more...)
+	}
+	if len(pts) > k {
+		pts = pts[:k]
+	}
+	return pts
 }
 
 func anchorVals(kind, a, b int, mults []byte) (v [6]byte) {
@@ -409,6 +541,8 @@ func scaleVariants(n int) []scaleBuild {
 		back  string
 		after string
 	}
+	// The scale counter sits on axis 0 or axis 1. Both loops have the same
+	// length, and a later axis does not make the counter shorter.
 	dirs := []dir{
 		{pt{1, 0}, ">", "<", ">"},
 		{pt{0, 1}, "v", "^", "v"},
@@ -510,23 +644,29 @@ func bestTour(start pt, pts []pt) []int {
 
 func move(from, to pt) string {
 	var b strings.Builder
-	dx := to.x - from.x
-	dy := to.y - from.y
-	if dx > 0 {
-		b.WriteString(strings.Repeat(">", dx))
-	} else if dx < 0 {
-		b.WriteString(strings.Repeat("<", -dx))
-	}
-	if dy > 0 {
-		b.WriteString(strings.Repeat("v", dy))
-	} else if dy < 0 {
-		b.WriteString(strings.Repeat("^", -dy))
+	for d := 0; d < planeMaxD; d++ {
+		delta := to[d] - from[d]
+		if delta == 0 {
+			continue
+		}
+		ch := axisPair[d][0]
+		if delta < 0 {
+			ch = axisPair[d][1]
+			delta = -delta
+		}
+		for i := 0; i < delta; i++ {
+			b.WriteByte(ch)
+		}
 	}
 	return b.String()
 }
 
 func manh(a, b pt) int {
-	return abs(a.x-b.x) + abs(a.y-b.y)
+	n := 0
+	for d := 0; d < planeMaxD; d++ {
+		n += abs(a[d] - b[d])
+	}
+	return n
 }
 
 func printCost(text string, vals [6]byte, pts []pt, start pt) int {
@@ -635,21 +775,80 @@ func loopCode(p loopPlan, at, z pt) string {
 
 func nearestZero(at pt, anchors []pt) (pt, int) {
 	for rad := 1; rad <= 8; rad++ {
-		for y := -rad; y <= rad; y++ {
-			x := rad - abs(y)
-			z := pt{at.x + x, at.y + y}
-			if !occupied(anchors, z) {
-				return z, rad
-			}
-			if x != 0 {
-				z = pt{at.x - x, at.y + y}
-				if !occupied(anchors, z) {
-					return z, rad
-				}
-			}
+		if z, ok := firstAtRadius(at, rad, anchors); ok {
+			return z, rad
 		}
 	}
-	return pt{at.x + 1, at.y}, 1
+	z := at
+	z[0]++
+	return z, 1
+}
+
+// firstAtRadius returns the first free cell at L1 distance rad.
+// Axis 1 is scanned from negative to positive, and higher axes stay at
+// 0 until that plane is exhausted, so a free neighbor on the first two
+// axes is chosen before a neighbor on a later axis.
+func firstAtRadius(at pt, rad int, anchors []pt) (pt, bool) {
+	cur := at
+	var rec func(dim, left int) (pt, bool)
+	rec = func(dim, left int) (pt, bool) {
+		if dim == 0 {
+			if left == 0 {
+				if !occupied(anchors, cur) {
+					return cur, true
+				}
+				return pt{}, false
+			}
+			cur[0] = at[0] + left
+			if !occupied(anchors, cur) {
+				return cur, true
+			}
+			cur[0] = at[0] - left
+			if !occupied(anchors, cur) {
+				return cur, true
+			}
+			cur[0] = at[0]
+			return pt{}, false
+		}
+		for _, v := range axisOffsets(dim, left) {
+			cur[dim] = at[dim] + v
+			if z, ok := rec(nextAxis(dim), left-abs(v)); ok {
+				return z, true
+			}
+		}
+		cur[dim] = at[dim]
+		return pt{}, false
+	}
+	return rec(1, rad)
+}
+
+func nextAxis(dim int) int {
+	if dim == 1 {
+		if planeMaxD > 2 {
+			return 2
+		}
+		return 0
+	}
+	if dim+1 < planeMaxD {
+		return dim + 1
+	}
+	return 0
+}
+
+func axisOffsets(dim, left int) []int {
+	if dim == 1 {
+		out := make([]int, 0, left*2+1)
+		for v := -left; v <= left; v++ {
+			out = append(out, v)
+		}
+		return out
+	}
+	out := make([]int, 0, left*2+1)
+	out = append(out, 0)
+	for v := 1; v <= left; v++ {
+		out = append(out, v, -v)
+	}
+	return out
 }
 
 func occupied(pts []pt, p pt) bool {
@@ -681,11 +880,7 @@ func climb(c planeCand, text string) []pt {
 		return len(initCode(c.kind, c.a, c.b, mults, p, c.at)) + printCost(text, anchorVals(c.kind, c.a, c.b, mults), p, c.at)
 	}
 	bestS := score(pts)
-	dirs := [...]pt{
-		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
-		{2, 0}, {-2, 0}, {0, 2}, {0, -2},
-		{1, 1}, {-1, 1}, {1, -1}, {-1, -1},
-	}
+	dirs := climbDirs()
 	for sweep := 0; sweep < 4; sweep++ {
 		improved := false
 		for i := range pts {
@@ -693,8 +888,11 @@ func climb(c planeCand, text string) []pt {
 			bestPt := base
 			local := bestS
 			for _, d := range dirs {
-				np := pt{base.x + d.x, base.y + d.y}
-				if np.x < -2 || np.x > 6 || np.y < -2 || np.y > 3 {
+				np := base
+				for a := range d {
+					np[a] += d[a]
+				}
+				if !inClimbBox(np) {
 					continue
 				}
 				if occupied(blocked, np) || occupiedOther(pts, i, np) {
@@ -717,6 +915,34 @@ func climb(c planeCand, text string) []pt {
 		}
 	}
 	return pts
+}
+
+func climbDirs() []pt {
+	dirs := []pt{
+		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+		{2, 0}, {-2, 0}, {0, 2}, {0, -2},
+		{1, 1}, {-1, 1}, {1, -1}, {-1, -1},
+	}
+	for d := 2; d < planeMaxD; d++ {
+		for _, s := range []int{1, -1, 2, -2} {
+			var step pt
+			step[d] = s
+			dirs = append(dirs, step)
+		}
+	}
+	return dirs
+}
+
+func inClimbBox(p pt) bool {
+	if p[0] < -2 || p[0] > 6 || p[1] < -2 || p[1] > 3 {
+		return false
+	}
+	for d := 2; d < planeMaxD; d++ {
+		if p[d] < -2 || p[d] > 2 {
+			return false
+		}
+	}
+	return true
 }
 
 func optimizePlane(text string, vals [6]byte, pts []pt, start pt, incumbent int) (string, bool) {
@@ -782,7 +1008,7 @@ func optimizePlane(text string, vals [6]byte, pts []pt, start pt, incumbent int)
 				nodes = append(nodes, node{cost: nc, i: n.i + 1, at: a, v: nv, prev: id, aj: a})
 				buckets[nc] = append(buckets[nc], len(nodes)-1)
 				if len(nodes) > 1_500_000 {
-					fmt.Fprintf(os.Stderr, "plane dp cap\n")
+					fmt.Fprintf(os.Stderr, "space dp cap\n")
 					return "", false
 				}
 			}

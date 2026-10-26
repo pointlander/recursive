@@ -99,6 +99,41 @@ func TestPlane(t *testing.T) {
 	}
 }
 
+func TestSpace(t *testing.T) {
+	st, err := ExecutePack("}+.", "", 20)
+	if err != nil || st.Out != "\x01" || st.Ptr != 0 || st.Y != 0 || len(st.Pos) < 3 || st.Pos[2] != 1 || st.At(0) != 0 {
+		t.Fatalf("axis2 out %q pos %v cell %d %v", st.Out, st.Pos, st.At(0), err)
+	}
+	st, err = ExecutePack(")+.", "", 20)
+	if err != nil || st.Out != "\x01" || len(st.Pos) < 4 || st.Pos[3] != 1 || st.Ptr != 0 || st.Y != 0 {
+		t.Fatalf("axis3 out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	st, err = ExecutePack("@\x04+.", "", 20)
+	if err != nil || st.Out != "\x01" || len(st.Pos) < 5 || st.Pos[4] != 1 || st.Ptr != 0 || st.Y != 0 || st.At(0) != 0 {
+		t.Fatalf("axis4 out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	st, err = ExecutePack("@\x84-.", "", 20)
+	if err != nil || st.Out != "\xff" || len(st.Pos) < 5 || st.Pos[4] != -1 {
+		t.Fatalf("neg out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	// The axis-2 cell is the same cell before and after axis 3 is used.
+	st, err = ExecutePack("}+{)(}.", "", 40)
+	if err != nil || st.Out != "\x01" || st.Ptr != 0 || st.Y != 0 {
+		t.Fatalf("same cell out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	if _, err := ExecutePack("@", "", 10); err == nil {
+		t.Fatal("expected truncated @")
+	}
+	// The byte after '@' is an operand, including when it looks like '['.
+	st, err = ExecutePack("@[+.", "", 20)
+	if err != nil || st.Out != "\x01" {
+		t.Fatalf("operand bracket out %q %v", st.Out, err)
+	}
+	if commandOnly("@\x04") || !commandOnly("}+.{") {
+		t.Fatal("command set")
+	}
+}
+
 func TestPackRoundTrip(t *testing.T) {
 	cases := []string{
 		"",
@@ -117,11 +152,14 @@ func TestPackRoundTrip(t *testing.T) {
 		strings.Repeat("ab", 200),
 		strings.Repeat("andrew jordan snodgrass", 12),
 		"~><+-.,[]",
+		"@",
+		"}{",
+		"()",
 		"a[b]",
 	}
 	for _, text := range cases {
 		prog := Pack(text)
-		if text != "" && !isSpecial(text[0]) && !strings.ContainsAny(text, "~><^v+-.,[]") && len(prog) > len(text) {
+		if text != "" && !isSpecial(text[0]) && !strings.ContainsAny(text, "~`|><^v{}()@+-.,[]") && len(prog) > len(text) {
 			t.Fatalf("%q grew %d -> %d", text, len(text), len(prog))
 		}
 		st, err := ExecutePack(prog, "", len(prog)+10)

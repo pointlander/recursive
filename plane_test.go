@@ -69,10 +69,10 @@ func TestScaleCode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("n %d code %s: %v", n, b.code, err)
 			}
-			if st.Ptr != b.at.x || st.Y != b.at.y || st.Out != string([]byte{byte(n)}) {
+			if st.Ptr != b.at[0] || st.Y != b.at[1] || st.Out != string([]byte{byte(n)}) {
 				t.Fatalf("n %d at %+v ptr %d y %d out %q code %s", n, b.at, st.Ptr, st.Y, st.Out, b.code)
 			}
-			if b.at.y == 0 && b.at.x != 0 && st.At(0) != 0 {
+			if b.at[1] == 0 && b.at[0] != 0 && st.At(0) != 0 {
 				t.Fatalf("n %d scratch %d code %s", n, st.At(0), b.code)
 			}
 		}
@@ -120,6 +120,55 @@ func TestPlaneDeposit(t *testing.T) {
 	}
 }
 
+func TestSpaceDeposit(t *testing.T) {
+	var a, b pt
+	a[2] = 1
+	b[3] = 1
+	pts := []pt{a, b}
+	code := flatCode(3, []byte{1, 2}, pts, pt{})
+	if !strings.Contains(code, "}") || !strings.Contains(code, ")") {
+		t.Fatalf("code %s", code)
+	}
+	code += move(pt{}, a) + "." + move(a, b) + "."
+	st, err := ExecutePack(code, "", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Out != string([]byte{3, 6}) {
+		t.Fatalf("space out %q code %s", st.Out, code)
+	}
+	if !commandOnly(code) {
+		t.Fatalf("code %s", code)
+	}
+}
+
+func TestNearestZeroPlane(t *testing.T) {
+	z, d := nearestZero(pt{}, nil)
+	want := pt{}
+	want[1] = -1
+	if d != 1 || z != want {
+		t.Fatalf("nearest %v %d", z, d)
+	}
+	z, d = nearestZero(pt{}, []pt{want})
+	if d != 1 || z != (pt{1}) {
+		t.Fatalf("next %v %d", z, d)
+	}
+}
+
+func TestHigherLayouts(t *testing.T) {
+	found := false
+	for _, set := range layouts(planeFlat, 4, pt{}) {
+		for _, p := range set {
+			if p[2] != 0 || p[3] != 0 {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("layouts stayed on the first two axes")
+	}
+}
+
 func TestPlaneShort(t *testing.T) {
 	for _, text := range []string{"a", "ab", "hi"} {
 		code, err := Plane(text)
@@ -161,5 +210,5 @@ func TestPlaneName(t *testing.T) {
 	if len(code) >= len(naive(text)) {
 		t.Fatalf("len %d naive %d", len(code), len(naive(text)))
 	}
-	t.Logf("plane %d bytes %s", len(code), code)
+	t.Logf("space %d bytes rank %d %s", len(code), spaceRank(code), code)
 }

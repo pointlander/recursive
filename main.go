@@ -94,10 +94,10 @@ func main() {
 		os.Exit(1)
 	}
 	if st.Out != text || !commandOnly(namePlane) {
-		fmt.Fprintf(os.Stderr, "plane printed %q\n", st.Out)
+		fmt.Fprintf(os.Stderr, "space printed %q\n", st.Out)
 		os.Exit(1)
 	}
-	fmt.Printf("name plane %d bytes\n%s\n", len(namePlane), namePlane)
+	fmt.Printf("name space %d bytes rank %d\n%s\n", len(namePlane), spaceRank(namePlane), namePlane)
 }
 
 // flateCompress returns data compressed with compress/flate at the best level.

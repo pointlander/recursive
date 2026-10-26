@@ -4,15 +4,35 @@
 
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
-// The pack machine is a two-dimensional brainfuck machine with a
+// axisCount is the number of axes with a one-byte step. The coordinate
+// itself is unbounded; '@' steps any later axis.
+const axisCount = 4
+
+// axisPair[d] is the positive step and the negative step on axis d.
+// > < are axis 0, v ^ are axis 1, } { are axis 2, and ) ( are axis 3.
+var axisPair = [axisCount][2]byte{
+	{'>', '<'},
+	{'v', '^'},
+	{'}', '{'},
+	{')', '('},
+}
+
+// The pack machine is an n-dimensional brainfuck machine with a
 // compression command.
 //
-// >< move horizontally and ^v move vertically on an 8-bit wrapping tape
-// that grows in every direction. +-.,[] add, read, write, and loop.
-// ',' reads the next input byte and stores 0 at the end of input.
-// '[' and ']' jump the way they do in Execute.
+// The head holds a coordinate that grows as new axes are used. Cells are
+// 8-bit and wrap. > and < step axis 0. v increases axis 1 and ^ decreases
+// it. } and { step axis 2. ) and ( step axis 3. '@' followed by one byte
+// steps any axis: the low 7 bits are the axis and the high bit set means
+// negative. +-.,[] add, read, write, and loop. ',' reads the next input
+// byte and stores 0 at the end of input. '[' and ']' jump the way they do
+// in Execute.
 // A byte that is not a command is written straight to the output, so a
 // string that contains no command bytes is a program that prints itself.
 //
@@ -129,12 +149,27 @@ func encode(text string, special func(byte) bool) string {
 }
 
 func isSpecial(b byte) bool {
+	if _, _, ok := axisStep(b); ok {
+		return true
+	}
 	switch b {
-	case '~', '`', '|', '>', '<', '^', 'v', '+', '-', '.', ',', '[', ']':
+	case '~', '`', '|', '@', '+', '-', '.', ',', '[', ']':
 		return true
 	default:
 		return false
 	}
+}
+
+func axisStep(b byte) (dim, delta int, ok bool) {
+	for d, p := range axisPair {
+		if b == p[0] {
+			return d, 1, true
+		}
+		if b == p[1] {
+			return d, -1, true
+		}
+	}
+	return 0, 0, false
 }
 
 // bitpack stores text as a 16-bit length, a first-seen alphabet, and
@@ -267,8 +302,8 @@ func longestMatch(text string, i int) (dist, length int) {
 
 // ExecutePack runs code on the pack machine.
 // input supplies bytes for ','. Execution fails past maxSteps or on a
-// truncated '~' command, an unmatched bracket, or a copy past the start
-// of the output.
+// truncated '~' or '@' command, an unmatched bracket, or a copy past the
+// start of the output.
 func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 	if maxSteps <= 0 {
 		return Stop{}, fmt.Errorf("maxSteps must be positive")
@@ -278,8 +313,7 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 		return Stop{}, err
 	}
 
-	sh := sheet{row0: tape{cells: []byte{0}}}
-	ptr := 0
+	sp := space{row0: tape{cells: []byte{0}}}
 	in := 0
 	var out []byte
 	steps := 0
@@ -289,35 +323,38 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 			return Stop{}, fmt.Errorf("exceeded %d steps", maxSteps)
 		}
 		switch code[ip] {
-		case '>':
-			ptr++
-		case '<':
-			ptr--
-		case '^':
-			sh.y--
-		case 'v':
-			sh.y++
 		case '+':
-			*sh.at(ptr)++
+			*sp.at()++
 		case '-':
-			*sh.at(ptr)--
+			*sp.at()--
 		case '.':
-			out = append(out, *sh.at(ptr))
+			out = append(out, *sp.at())
 		case ',':
 			if in < len(input) {
-				*sh.at(ptr) = input[in]
+				*sp.at() = input[in]
 				in++
 			} else {
-				*sh.at(ptr) = 0
+				*sp.at() = 0
 			}
 		case '[':
-			if *sh.at(ptr) == 0 {
+			if *sp.at() == 0 {
 				ip = jump[ip]
 			}
 		case ']':
-			if *sh.at(ptr) != 0 {
+			if *sp.at() != 0 {
 				ip = jump[ip]
 			}
+		case '@':
+			if ip+1 >= len(code) {
+				return Stop{}, fmt.Errorf("truncated @ at %d", ip)
+			}
+			arg := code[ip+1]
+			ip++
+			delta := 1
+			if arg&0x80 != 0 {
+				delta = -1
+			}
+			sp.step(int(arg&0x7f), delta)
 		case '~':
 			var last int
 			out, last, err = applyTilde(code, ip, out)
@@ -340,40 +377,97 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 			out = append(out, extra...)
 			ip = len(code)
 		default:
-			out = append(out, code[ip])
+			if dim, delta, ok := axisStep(code[ip]); ok {
+				sp.step(dim, delta)
+			} else {
+				out = append(out, code[ip])
+			}
 		}
 	}
+	x, y, pos := sp.head()
 	return Stop{
 		Out:   string(out),
-		Cells: sh.row0.cells,
-		Base:  sh.row0.base,
-		Ptr:   ptr,
-		Y:     sh.y,
+		Cells: sp.row0.cells,
+		Base:  sp.row0.base,
+		Ptr:   x,
+		Y:     y,
+		Pos:   pos,
 		Steps: steps,
 	}, nil
 }
 
-// sheet is the pack machine's plane. Row 0 is stored on its own so Stop
-// can report that row the way the one-dimensional machine did.
-type sheet struct {
-	y    int
+// space is the pack machine's tape. The axis-0 line at the origin of
+// every other axis is stored on its own so Stop can report that line the
+// way the one-dimensional machine did.
+type space struct {
+	pos  []int
 	row0 tape
-	rows map[int]*tape
+	mem  map[string]*byte
 }
 
-func (s *sheet) at(x int) *byte {
-	if s.y == 0 {
+func (s *space) step(dim, delta int) {
+	for len(s.pos) <= dim {
+		s.pos = append(s.pos, 0)
+	}
+	s.pos[dim] += delta
+}
+
+func (s *space) head() (x, y int, pos []int) {
+	pos = append([]int(nil), s.pos...)
+	if len(pos) > 0 {
+		x = pos[0]
+	}
+	if len(pos) > 1 {
+		y = pos[1]
+	}
+	return x, y, pos
+}
+
+func (s *space) onRow0() bool {
+	for i := 1; i < len(s.pos); i++ {
+		if s.pos[i] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *space) at() *byte {
+	if s.onRow0() {
+		x := 0
+		if len(s.pos) > 0 {
+			x = s.pos[0]
+		}
 		return s.row0.at(x)
 	}
-	if s.rows == nil {
-		s.rows = make(map[int]*tape)
+	key := coordKey(s.pos)
+	if s.mem == nil {
+		s.mem = make(map[string]*byte)
 	}
-	t := s.rows[s.y]
-	if t == nil {
-		t = &tape{cells: []byte{0}}
-		s.rows[s.y] = t
+	p := s.mem[key]
+	if p == nil {
+		b := byte(0)
+		p = &b
+		s.mem[key] = p
 	}
-	return t.at(x)
+	return p
+}
+
+// coordKey names a cell. Trailing zeros do not change the cell, so a
+// visit before and after a higher axis has been used is the same cell.
+func coordKey(pos []int) string {
+	n := len(pos)
+	for n > 0 && pos[n-1] == 0 {
+		n--
+	}
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(pos[i]))
+	}
+	return b.String()
 }
 
 // applyTilde runs the '~' command at i and returns the index of its last byte.
@@ -452,6 +546,13 @@ func packJumps(code string) ([]int, error) {
 				return nil, err
 			}
 			i = last + 1
+			continue
+		}
+		if code[i] == '@' {
+			if i+1 >= len(code) {
+				return nil, fmt.Errorf("truncated @ at %d", i)
+			}
+			i += 2
 			continue
 		}
 		switch code[i] {
