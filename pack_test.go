@@ -129,8 +129,47 @@ func TestSpace(t *testing.T) {
 	if err != nil || st.Out != "\x01" {
 		t.Fatalf("operand bracket out %q %v", st.Out, err)
 	}
-	if commandOnly("@\x04") || !commandOnly("}+.{") {
+	if commandOnly("@\x04") || !commandOnly("}+.{") || !commandOnly("*++.>") {
 		t.Fatal("command set")
+	}
+}
+
+func TestDimStack(t *testing.T) {
+	// The emitted stack cell selects the axis and is not written out.
+	st, err := ExecutePack("*++.>+.", "", 50)
+	if err != nil || st.Out != "\x01" || len(st.Pos) < 3 || st.Pos[2] != 1 || st.Ptr != 0 || st.Y != 0 {
+		t.Fatalf("axis2 out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	st, err = ExecutePack("*+.>+.", "", 30)
+	if err != nil || st.Out != "\x01" || st.Y != 1 || st.Ptr != 0 {
+		t.Fatalf("axis1 out %q y %d %v", st.Out, st.Y, err)
+	}
+	// 8*5 on the stack selects axis 40.
+	st, err = ExecutePack("*++++++++[>+++++<-]>.>+.", "", 400)
+	if err != nil || st.Out != "\x01" || len(st.Pos) < 41 || st.Pos[40] != 1 {
+		t.Fatalf("axis40 out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	// A second '*' pushes a new cell. '.' emits that cell.
+	st, err = ExecutePack("*++++*++.>+.", "", 40)
+	if err != nil || st.Out != "\x01" || len(st.Pos) < 3 || st.Pos[2] != 1 {
+		t.Fatalf("second cell out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	st, err = ExecutePack("*,.>+.", "\x05", 30)
+	if err != nil || st.Out != "\x01" || len(st.Pos) < 6 || st.Pos[5] != 1 {
+		t.Fatalf("read out %q pos %v %v", st.Out, st.Pos, err)
+	}
+	// After the stack '.', tape '.' prints the tape. v still steps axis 1.
+	st, err = ExecutePack("*+..", "", 20)
+	if err != nil || st.Out != "\x00" || st.Ptr != 0 || st.Y != 0 {
+		t.Fatalf("tape dot %q %v", st.Out, err)
+	}
+	st, err = ExecutePack("*++.>v+.", "", 40)
+	if err != nil || st.Out != "\x01" || st.Y != 1 || len(st.Pos) < 3 || st.Pos[2] != 1 {
+		t.Fatalf("absolute v out %q pos %v y %d %v", st.Out, st.Pos, st.Y, err)
+	}
+	st, err = ExecutePack(">+.", "", 20)
+	if err != nil || st.Out != "\x01" || st.Ptr != 1 || st.Y != 0 {
+		t.Fatalf("plain right out %q ptr %d %v", st.Out, st.Ptr, err)
 	}
 }
 
@@ -155,11 +194,13 @@ func TestPackRoundTrip(t *testing.T) {
 		"@",
 		"}{",
 		"()",
+		"*",
+		"a*b",
 		"a[b]",
 	}
 	for _, text := range cases {
 		prog := Pack(text)
-		if text != "" && !isSpecial(text[0]) && !strings.ContainsAny(text, "~`|><^v{}()@+-.,[]") && len(prog) > len(text) {
+		if text != "" && !isSpecial(text[0]) && !strings.ContainsAny(text, "~`|><^v{}()*@+-.,[]") && len(prog) > len(text) {
 			t.Fatalf("%q grew %d -> %d", text, len(text), len(prog))
 		}
 		st, err := ExecutePack(prog, "", len(prog)+10)

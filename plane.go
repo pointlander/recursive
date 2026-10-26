@@ -15,13 +15,14 @@ import (
 
 // Plane searches for a short program that prints text on the pack machine.
 //
-// Every byte of the program is a one-byte axis step or one of +-.[].
+// Every byte of the program is a one-byte axis step, '*', or one of +-.[].
 // The search does not emit literal bytes, '~' escapes, raw blocks, a
 // bit-packed payload, or an '@' operand. It plants a few anchor cells
 // with a flat or nested multiply loop, lays those cells out across the
 // axes the machine can step in one byte, and walks a print path of moves,
-// adds, and dots. The result is the shortest program found in this family,
-// not a proof of the shortest program the machine can run.
+// adds, and dots. A second pass plants anchors on later axes, selected
+// with the dimension stack. The result is the shortest program found in
+// this family, not a proof of the shortest program the machine can run.
 
 const (
 	planeNest = iota
@@ -113,6 +114,9 @@ func Plane(text string) (string, error) {
 	s.searchNest()
 	s.searchFlat()
 	s.finish()
+	if err := s.searchStack(); err != nil {
+		return "", err
+	}
 	if err := verifyPlane(text, s.bestCode); err != nil {
 		return "", err
 	}
@@ -299,7 +303,7 @@ func commandOnly(code string) bool {
 			continue
 		}
 		switch code[i] {
-		case '+', '-', '.', ',', '[', ']':
+		case '*', '+', '-', '.', ',', '[', ']':
 		default:
 			return false
 		}

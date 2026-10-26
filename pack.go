@@ -27,12 +27,19 @@ var axisPair = [axisCount][2]byte{
 // compression command.
 //
 // The head holds a coordinate that grows as new axes are used. Cells are
-// 8-bit and wrap. > and < step axis 0. v increases axis 1 and ^ decreases
-// it. } and { step axis 2. ) and ( step axis 3. '@' followed by one byte
-// steps any axis: the low 7 bits are the axis and the high bit set means
-// negative. +-.,[] add, read, write, and loop. ',' reads the next input
-// byte and stores 0 at the end of input. '[' and ']' jump the way they do
-// in Execute.
+// 8-bit and wrap. > and < step the active axis, which starts at 0. v
+// increases axis 1 and ^ decreases it. } and { step axis 2. ) and (
+// step axis 3. '@' followed by one byte steps any axis: the low 7 bits
+// are the axis and the high bit set means negative. +-.,[] add, read,
+// write, and loop on the tape. ',' reads the next input byte and stores
+// 0 at the end of input. '[' and ']' jump the way they do in Execute.
+//
+// '*' pushes a zero cell onto a dimension stack and aims ><+-.,[] at
+// that stack. On the stack those commands are ordinary brainfuck, and a
+// further '*' pushes another zero cell past the cells already used.
+// '.' on the stack reads the current cell as an axis index, aims '>' and
+// '<' at that axis, and does not write the byte to the output. v^ }{ )(
+// keep stepping axes 1, 2, and 3.
 // A byte that is not a command is written straight to the output, so a
 // string that contains no command bytes is a program that prints itself.
 //
@@ -153,7 +160,7 @@ func isSpecial(b byte) bool {
 		return true
 	}
 	switch b {
-	case '~', '`', '|', '@', '+', '-', '.', ',', '[', ']':
+	case '~', '`', '|', '@', '*', '+', '-', '.', ',', '[', ']':
 		return true
 	default:
 		return false
@@ -314,6 +321,7 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 	}
 
 	sp := space{row0: tape{cells: []byte{0}}}
+	var sel dimSel
 	in := 0
 	var out []byte
 	steps := 0
@@ -323,26 +331,46 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 			return Stop{}, fmt.Errorf("exceeded %d steps", maxSteps)
 		}
 		switch code[ip] {
+		case '*':
+			sel.push()
 		case '+':
-			*sp.at()++
+			*sel.cell(&sp)++
 		case '-':
-			*sp.at()--
+			*sel.cell(&sp)--
 		case '.':
-			out = append(out, *sp.at())
+			if sel.on {
+				sel.axis = int(*sel.cell(&sp))
+				sel.on = false
+			} else {
+				out = append(out, *sp.at())
+			}
 		case ',':
+			dst := sel.cell(&sp)
 			if in < len(input) {
-				*sp.at() = input[in]
+				*dst = input[in]
 				in++
 			} else {
-				*sp.at() = 0
+				*dst = 0
 			}
 		case '[':
-			if *sp.at() == 0 {
+			if *sel.cell(&sp) == 0 {
 				ip = jump[ip]
 			}
 		case ']':
-			if *sp.at() != 0 {
+			if *sel.cell(&sp) != 0 {
 				ip = jump[ip]
+			}
+		case '>':
+			if sel.on {
+				sel.move(1)
+			} else {
+				sp.step(sel.axis, 1)
+			}
+		case '<':
+			if sel.on {
+				sel.move(-1)
+			} else {
+				sp.step(sel.axis, -1)
 			}
 		case '@':
 			if ip+1 >= len(code) {
@@ -394,6 +422,49 @@ func ExecutePack(code, input string, maxSteps int) (Stop, error) {
 		Pos:   pos,
 		Steps: steps,
 	}, nil
+}
+
+// dimSel is the stack whose emitted cell chooses the active axis.
+// '*' pushes a zero cell and aims the standard commands here. '.' copies
+// the current cell into axis and aims those commands back at the tape.
+type dimSel struct {
+	cells tape
+	ptr   int
+	hi    int
+	on    bool
+	used  bool
+	axis  int
+}
+
+func (d *dimSel) push() {
+	if !d.used {
+		d.used = true
+		d.ptr = 0
+		d.hi = 0
+		d.on = true
+		return
+	}
+	d.hi++
+	d.ptr = d.hi
+	*d.cells.at(d.ptr) = 0
+	d.on = true
+}
+
+func (d *dimSel) move(delta int) {
+	d.ptr += delta
+	if d.ptr > d.hi {
+		d.hi = d.ptr
+	}
+	_ = d.cells.at(d.ptr)
+}
+
+// cell is the stack cell while a dimension is being built, and the tape
+// cell otherwise.
+func (d *dimSel) cell(sp *space) *byte {
+	if d.on {
+		return d.cells.at(d.ptr)
+	}
+	return sp.at()
 }
 
 // space is the pack machine's tape. The axis-0 line at the origin of
